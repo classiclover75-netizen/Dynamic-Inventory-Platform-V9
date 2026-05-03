@@ -575,7 +575,7 @@ function AppContent() {
   }, []);
 
   const handleExportData = () => {
-    window.open("/api/export");
+    window.open("/api/export-zip");
     toast("Export started. Check your downloads.");
   };
 
@@ -714,80 +714,38 @@ function AppContent() {
     step: number;
   } | null>(null);
 
-  const handleImportData = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportData = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const isLargeFile = file.size > 50 * 1024 * 1024; // 50MB
-    if (isLargeFile) {
-      if (
-        !window.confirm(
-          "Large File Warning: This file is very large and may take a few minutes to process. Your browser might become unresponsive during the upload. Continue?",
-        )
-      ) {
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
-      }
-    }
-
     setIsImporting(true);
-    setImportProgress({ message: "Starting import...", percent: 0 });
+    setImportProgress({ message: "Uploading zip file...", percent: null });
 
-    // Create worker dynamically
-    const worker = new Worker(new URL("./importWorker.ts", import.meta.url), {
-      type: "module",
-    });
+    try {
+      const formData = new FormData();
+      formData.append('backup', file);
 
-    worker.onmessage = async (e) => {
-      const { type, message, error } = e.data;
+      const response = await fetch('/api/import-zip', {
+        method: 'POST',
+        body: formData,
+      });
 
-      if (type === "progress") {
-        setImportProgress({
-          message: message,
-          percent: e.data.percent !== undefined ? e.data.percent : null,
-        });
-      } else if (type === "success") {
-        setImportProgress({ message: "Syncing with server...", percent: 100 });
-        try {
-          const { openDB } = await import("idb");
-          const db = await openDB("InventoryImportDB", 1);
-          const parsed = await db.get("import_buffer", "latest_import");
-
-          if (!parsed) throw new Error("Could not read from IndexedDB buffer");
-
-          const response = await fetch("/api/state", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(parsed),
-          });
-
-          if (response.ok) {
-            toast("Data imported successfully");
-            await db.delete("import_buffer", "latest_import");
-            db.close();
-            setTimeout(() => window.location.reload(), 1000);
-          } else {
-            toast("Failed to sync with server");
-            setIsImporting(false);
-          }
-        } catch (err) {
-          console.error("Sync error:", err);
-          toast("Error during server sync");
-          setIsImporting(false);
-        } finally {
-          worker.terminate();
-          if (fileInputRef.current) fileInputRef.current.value = "";
-        }
-      } else if (type === "error") {
-        console.error("Worker error:", error);
-        toast(error || "Error analyzing backup file");
+      if (response.ok) {
+        setImportProgress({ message: "Data imported successfully!", percent: 100 });
+        toast("Data imported successfully");
+        setTimeout(() => window.location.reload(), 1000);
+      } else {
+        const errData = await response.json().catch(() => ({}));
+        toast(errData.error || "Failed to sync with server");
         setIsImporting(false);
-        worker.terminate();
-        if (fileInputRef.current) fileInputRef.current.value = "";
       }
-    };
-
-    worker.postMessage({ file });
+    } catch (err) {
+      console.error("Sync error:", err);
+      toast("Error during server sync");
+      setIsImporting(false);
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   useEffect(() => {
@@ -3555,7 +3513,7 @@ function AppContent() {
                     handleExportData();
                   }}
                 >
-                  💾 Export Backup (JSON)
+                  💾 Export Backup (ZIP)
                 </button>
                 <button
                   className="w-full text-left border-0 rounded bg-[#f4f6f8] text-[#263238] text-xs font-bold p-2 cursor-pointer hover:bg-[#e8edf2]"
@@ -3566,7 +3524,7 @@ function AppContent() {
                     }, 50);
                   }}
                 >
-                  📂 Import Backup (JSON)
+                  📂 Import Backup (ZIP)
                 </button>
 
                 <div className="text-[11px] font-bold text-blue-600 border-b border-blue-100 mb-2 mt-3 pb-1.5 uppercase tracking-wide">
@@ -3660,7 +3618,7 @@ function AppContent() {
             )}
             <input
               type="file"
-              accept=".json"
+              accept=".zip"
               ref={fileInputRef}
               style={{ display: "none" }}
               onChange={handleImportData}

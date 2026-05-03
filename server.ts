@@ -8,6 +8,11 @@ import 'dotenv/config';
 import { v4 as uuidv4 } from 'uuid';
 import sharp from 'sharp';
 import crypto from 'crypto';
+import archiver from 'archiver';
+import AdmZip from 'adm-zip';
+import multer from 'multer';
+
+const upload = multer({ dest: 'temp_uploads/' });
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -578,6 +583,72 @@ app.get('/api/export', async (req, res) => {
   }
 });
 
+app.get('/api/export-zip', async (req, res) => {
+  try {
+    let state: any = {};
+    if (isUsingMongoDB) {
+      const pages = await Page.find({});
+      const rows = await PageRow.find({});
+      const settings: any = await AppSettings.findOne() || {};
+      
+      const pageConfigs: Record<string, any> = {};
+      const pageRows: Record<string, any[]> = {};
+      
+      pages.forEach(p => {
+        pageConfigs[p.name] = p.config;
+      });
+      
+      rows.forEach(r => {
+        if (!pageRows[r.pageName]) pageRows[r.pageName] = [];
+        pageRows[r.pageName].push(r.data);
+      });
+
+      // DO NOT EMBED IMAGES. DONT PASS THROUGH embedImagesInRows.
+      
+      state = {
+        pages: pages.map(p => p.name),
+        activePage: pages.length > 0 ? pages[0].name : '',
+        pageConfigs,
+        pageRows,
+        globalCopyBoxes: settings.globalCopyBoxes,
+        globalRowNoWidth: settings.globalRowNoWidth,
+        maxSearchHistory: settings.maxSearchHistory
+      };
+    } else {
+      state = await getLocalDB();
+      // DO NOT EMBED IMAGES.
+    }
+
+    const date = new Date();
+    const day = String(date.getDate()).padStart(2, '0');
+    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const month = monthNames[date.getMonth()];
+    const year = date.getFullYear();
+    const formattedDate = `${day}-${month}-${year}`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename=inventory_backup_${formattedDate}.zip`);
+    
+    const archive = archiver('zip', {
+      zlib: { level: 9 } // Sets the compression level.
+    });
+
+    archive.on('error', function(err) {
+      throw err;
+    });
+
+    archive.pipe(res);
+
+    archive.append(JSON.stringify(state, null, 2), { name: 'data.json' });
+    archive.directory(UPLOADS_DIR, 'uploads');
+
+    await archive.finalize();
+  } catch (err) {
+    console.error('Export zip error:', err);
+    res.status(500).json({ error: 'Failed to export data as zip' });
+  }
+});
+
 app.get('/api/state', async (req, res) => {
   try {
     if (isUsingMongoDB) {
@@ -1036,6 +1107,174 @@ app.put('/api/state', async (req, res) => {
   } catch (err) {
     console.error('Bulk sync error:', err);
     res.status(500).json({ error: 'Failed to sync state' });
+  }
+});
+
+app.post('/api/import-zip', upload.single('backup'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No zip file uploaded' });
+    }
+
+    const zip = new AdmZip(req.file.path);
+    const zipEntries = zip.getEntries();
+    
+    // Extract uploads directly
+    zip.extractEntryTo('uploads/', UPLOADS_DIR, false, true);
+
+    const dataEntry = zipEntries.find((entry: any) => entry.entryName === 'data.json');
+    if (!dataEntry) {
+      return res.status(400).json({ error: 'data.json not found in zip archive' });
+    }
+
+    const newState = JSON.parse(dataEntry.getData().toString('utf8'));
+
+    // Fix duplicate IDs across all pages first
+    if (newState.pageRows) {
+      for (const pageName in newState.pageRows) {
+        const seenIds = new Set<string>();
+        newState.pageRows[pageName] = (newState.pageRows[pageName] || []).map((row: any) => {
+          if (!row.id || seenIds.has(String(row.id))) {
+            row.id = uuidv4();
+          }
+          seenIds.add(String(row.id));
+          return row;
+        });
+      }
+    }
+
+    // Repair tracker rows from source pages before processing
+    if (newState.pageConfigs && newState.pageRows) {
+      for (const [trackerName, trackerConfig] of Object.entries(newState.pageConfigs)) {
+        const config = trackerConfig as any;
+        if (config.linkedSourcePage && newState.pageRows[config.linkedSourcePage]) {
+          const sourceRows = newState.pageRows[config.linkedSourcePage];
+          
+          if (!newState.pageRows[trackerName]) {
+            newState.pageRows[trackerName] = [];
+          }
+          
+          const trackerRowsMap = new Map();
+          for (const tr of newState.pageRows[trackerName]) {
+            if (tr.id) trackerRowsMap.set(String(tr.id), tr);
+          }
+          
+          const repairedTrackerRows = sourceRows.map((sr: any) => {
+            const existingTr = trackerRowsMap.get(String(sr.id));
+            if (existingTr) {
+              const trackerKeysToKeep = [
+                "total_qty",
+                "remaining_qty"
+              ];
+              if (Array.isArray(config.columns)) {
+                config.columns.forEach((c: any) => {
+                  if (c.type === "sale_tracker" && c.key) {
+                    trackerKeysToKeep.push(c.key);
+                  }
+                });
+              }
+              const preservedData: any = {};
+              for (const k of trackerKeysToKeep) {
+                if (k in existingTr) preservedData[k] = existingTr[k];
+              }
+              return { ...sr, ...preservedData };
+            } else {
+              return { ...sr, total_qty: "0" };
+            }
+          });
+          
+          newState.pageRows[trackerName] = repairedTrackerRows;
+        }
+      }
+    }
+
+    // We do NOT process base64 images here because they are already extracted physical files.
+    const processedPageRows = newState.pageRows || {};
+
+    if (isUsingMongoDB) {
+      // Fetch all existing rows to cleanup images
+      const allOldPageRows = await PageRow.find({});
+      const allOldRows = allOldPageRows.map(r => r.data);
+      
+      const allNewRows: any[] = [];
+      for (const pageName in processedPageRows) {
+        allNewRows.push(...processedPageRows[pageName]);
+      }
+      
+      await cleanupOrphanImages(allOldRows, allNewRows, true);
+
+      // Clear existing data
+      await Page.deleteMany({});
+      await PageRow.deleteMany({});
+      await AppSettings.deleteMany({});
+      
+      // Insert new pages (without rows)
+      const pagesToInsert = newState.pages.map((name: string) => ({
+        name,
+        config: newState.pageConfigs[name] || {}
+      }));
+      
+      if (pagesToInsert.length > 0) {
+        await Page.insertMany(pagesToInsert);
+      }
+
+      // Insert all rows
+      const allRowsToInsert: any[] = [];
+      newState.pages.forEach((pageName: string) => {
+        const rows = processedPageRows[pageName] || [];
+        rows.forEach((row: any) => {
+          allRowsToInsert.push({ pageName, data: row });
+        });
+      });
+
+      if (allRowsToInsert.length > 0) {
+        await PageRow.insertMany(allRowsToInsert);
+      }
+      
+      // Update settings
+      await AppSettings.findOneAndUpdate({}, {
+        globalCopyBoxes: newState.globalCopyBoxes,
+        globalRowNoWidth: newState.globalRowNoWidth,
+        maxSearchHistory: newState.maxSearchHistory
+      }, { upsert: true });
+    } else {
+      const db = await getLocalDB();
+      const allOldRows: any[] = [];
+      db.pages.forEach((p: any) => {
+        if (p.rows) allOldRows.push(...p.rows);
+      });
+
+      const allNewRows: any[] = [];
+      for (const pageName in processedPageRows) {
+        allNewRows.push(...processedPageRows[pageName]);
+      }
+      await cleanupOrphanImages(allOldRows, allNewRows, true);
+
+      const newDb = {
+        pages: newState.pages.map((name: string) => ({
+          name,
+          config: newState.pageConfigs[name] || {},
+          rows: processedPageRows[name] || []
+        })),
+        settings: {
+          globalCopyBoxes: newState.globalCopyBoxes,
+          globalRowNoWidth: newState.globalRowNoWidth,
+          maxSearchHistory: newState.maxSearchHistory
+        }
+      };
+      await saveLocalDB(newDb);
+    }
+
+    // Clean up temp file
+    fs.unlinkSync(req.file.path);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Import zip error:', err);
+    if (req.file && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
+    res.status(500).json({ error: 'Failed to import zip state' });
   }
 });
 
