@@ -719,25 +719,48 @@ function AppContent() {
     if (!file) return;
 
     setIsImporting(true);
-    setImportProgress({ message: "Uploading zip file...", percent: null });
+    const isZip = file.name.toLowerCase().endsWith('.zip');
+    setImportProgress({ message: `Processing ${isZip ? 'ZIP' : 'JSON'} file...`, percent: null });
 
     try {
-      const formData = new FormData();
-      formData.append('backup', file);
+      if (isZip) {
+        const formData = new FormData();
+        formData.append('backup', file);
 
-      const response = await fetch('/api/import-zip', {
-        method: 'POST',
-        body: formData,
-      });
+        const response = await fetch('/api/import-zip', {
+          method: 'POST',
+          body: formData,
+        });
 
-      if (response.ok) {
-        setImportProgress({ message: "Data imported successfully!", percent: 100 });
-        toast("Data imported successfully");
-        setTimeout(() => window.location.reload(), 1000);
+        if (response.ok) {
+          setImportProgress({ message: "Data imported successfully!", percent: 100 });
+          toast("Data imported successfully");
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          toast(errData.error || "Failed to sync with server");
+          setIsImporting(false);
+        }
       } else {
-        const errData = await response.json().catch(() => ({}));
-        toast(errData.error || "Failed to sync with server");
-        setIsImporting(false);
+        // Handle JSON
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+
+        const response = await fetch("/api/state", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(parsed),
+        });
+
+        if (response.ok) {
+          setImportProgress({ message: "Data imported successfully!", percent: 100 });
+          toast("Data imported successfully");
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          toast(errData.error || "Failed to sync with server");
+          setIsImporting(false);
+        }
       }
     } catch (err) {
       console.error("Sync error:", err);
@@ -3524,7 +3547,7 @@ function AppContent() {
                     }, 50);
                   }}
                 >
-                  📂 Import Backup (ZIP)
+                  📂 Import Backup (JSON/ZIP)
                 </button>
 
                 <div className="text-[11px] font-bold text-blue-600 border-b border-blue-100 mb-2 mt-3 pb-1.5 uppercase tracking-wide">
@@ -3618,7 +3641,7 @@ function AppContent() {
             )}
             <input
               type="file"
-              accept=".zip"
+              accept=".json,.zip"
               ref={fileInputRef}
               style={{ display: "none" }}
               onChange={handleImportData}
