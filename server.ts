@@ -956,14 +956,17 @@ app.put('/api/settings', async (req, res) => {
 
 app.put('/api/state', async (req, res) => {
   try {
-    let newState = req.body;
+    const payload = req.body;
+    const isSinglePage = !!(payload.name && Array.isArray(payload.rows) && !payload.pages);
+    
+    let newState = payload;
 
     // Smart Fallback: Detect if the user uploaded a single-page backup instead of a full state backup
-    if (newState.name && Array.isArray(newState.rows) && !newState.pages) {
+    if (isSinglePage) {
       newState = {
-        pages: [newState.name],
-        pageConfigs: { [newState.name]: newState.config || {} },
-        pageRows: { [newState.name]: newState.rows },
+        pages: [payload.name],
+        pageConfigs: { [payload.name]: payload.config || {} },
+        pageRows: { [payload.name]: payload.rows },
         // Keep default settings to prevent crashes
         globalCopyBoxes: null,
         globalRowNoWidth: 100,
@@ -1040,77 +1043,114 @@ app.put('/api/state', async (req, res) => {
     }
 
     if (isUsingMongoDB) {
-      // Fetch all existing rows to cleanup images
-      const allOldPageRows = await PageRow.find({});
-      const allOldRows = allOldPageRows.map(r => r.data);
-      
-      const allNewRows: any[] = [];
-      for (const pageName in processedPageRows) {
-        allNewRows.push(...processedPageRows[pageName]);
-      }
-      
-      await cleanupOrphanImages(allOldRows, allNewRows, true);
+      if (isSinglePage) {
+        const pageName = payload.name;
+        // Upsert page config
+        await Page.findOneAndUpdate(
+          { name: pageName },
+          { name: pageName, config: newState.pageConfigs[pageName] || {} },
+          { upsert: true }
+        );
 
-      // Clear existing data
-      await Page.deleteMany({});
-      await PageRow.deleteMany({});
-      await AppSettings.deleteMany({});
-      
-      // Insert new pages (without rows)
-      const pagesToInsert = newState.pages.map((name: string) => ({
-        name,
-        config: newState.pageConfigs[name] || {}
-      }));
-      
-      if (pagesToInsert.length > 0) {
-        await Page.insertMany(pagesToInsert);
-      }
+        // Delete only the rows belonging to that specific page
+        await PageRow.deleteMany({ pageName });
 
-      // Insert all rows
-      const allRowsToInsert: any[] = [];
-      newState.pages.forEach((pageName: string) => {
+        // Insert only the new rows for that page
         const rows = processedPageRows[pageName] || [];
-        rows.forEach((row: any) => {
-          allRowsToInsert.push({ pageName, data: row });
-        });
-      });
+        const rowsToInsert = rows.map((row: any) => ({ pageName, data: row }));
+        if (rowsToInsert.length > 0) {
+          await PageRow.insertMany(rowsToInsert);
+        }
+      } else {
+        // Fetch all existing rows to cleanup images
+        const allOldPageRows = await PageRow.find({});
+        const allOldRows = allOldPageRows.map(r => r.data);
+        
+        const allNewRows: any[] = [];
+        for (const pageName in processedPageRows) {
+          allNewRows.push(...processedPageRows[pageName]);
+        }
+        
+        await cleanupOrphanImages(allOldRows, allNewRows, true);
 
-      if (allRowsToInsert.length > 0) {
-        await PageRow.insertMany(allRowsToInsert);
-      }
-      
-      // Update settings
-      await AppSettings.findOneAndUpdate({}, {
-        globalCopyBoxes: newState.globalCopyBoxes,
-        globalRowNoWidth: newState.globalRowNoWidth,
-        maxSearchHistory: newState.maxSearchHistory
-      }, { upsert: true });
-    } else {
-      const db = await getLocalDB();
-      const allOldRows: any[] = [];
-      db.pages.forEach((p: any) => {
-        if (p.rows) allOldRows.push(...p.rows);
-      });
-
-      const allNewRows: any[] = [];
-      for (const pageName in processedPageRows) {
-        allNewRows.push(...processedPageRows[pageName]);
-      }
-      await cleanupOrphanImages(allOldRows, allNewRows, true);
-
-      const newDb = {
-        pages: newState.pages.map((name: string) => ({
+        // Clear existing data
+        await Page.deleteMany({});
+        await PageRow.deleteMany({});
+        await AppSettings.deleteMany({});
+        
+        // Insert new pages (without rows)
+        const pagesToInsert = newState.pages.map((name: string) => ({
           name,
-          config: newState.pageConfigs[name] || {},
-          rows: processedPageRows[name] || []
-        })),
-        settings: {
+          config: newState.pageConfigs[name] || {}
+        }));
+        
+        if (pagesToInsert.length > 0) {
+          await Page.insertMany(pagesToInsert);
+        }
+
+        // Insert all rows
+        const allRowsToInsert: any[] = [];
+        newState.pages.forEach((pageName: string) => {
+          const rows = processedPageRows[pageName] || [];
+          rows.forEach((row: any) => {
+            allRowsToInsert.push({ pageName, data: row });
+          });
+        });
+
+        if (allRowsToInsert.length > 0) {
+          await PageRow.insertMany(allRowsToInsert);
+        }
+        
+        // Update settings
+        await AppSettings.findOneAndUpdate({}, {
           globalCopyBoxes: newState.globalCopyBoxes,
           globalRowNoWidth: newState.globalRowNoWidth,
           maxSearchHistory: newState.maxSearchHistory
+        }, { upsert: true });
+      }
+    } else {
+      const db = await getLocalDB();
+      if (isSinglePage) {
+        const pageName = payload.name;
+        const pageIdx = db.pages.findIndex((p: any) => p.name === pageName);
+        const newPageData = {
+          name: pageName,
+          config: newState.pageConfigs[pageName] || {},
+          rows: processedPageRows[pageName] || []
+        };
+
+        if (pageIdx >= 0) {
+          db.pages[pageIdx] = newPageData;
+        } else {
+          db.pages.push(newPageData);
         }
-      };
-      await saveLocalDB(newDb);
+        await saveLocalDB(db);
+      } else {
+        const allOldRows: any[] = [];
+        db.pages.forEach((p: any) => {
+          if (p.rows) allOldRows.push(...p.rows);
+        });
+
+        const allNewRows: any[] = [];
+        for (const pageName in processedPageRows) {
+          allNewRows.push(...processedPageRows[pageName]);
+        }
+        await cleanupOrphanImages(allOldRows, allNewRows, true);
+
+        const newDb = {
+          pages: newState.pages.map((name: string) => ({
+            name,
+            config: newState.pageConfigs[name] || {},
+            rows: processedPageRows[name] || []
+          })),
+          settings: {
+            globalCopyBoxes: newState.globalCopyBoxes,
+            globalRowNoWidth: newState.globalRowNoWidth,
+            maxSearchHistory: newState.maxSearchHistory
+          }
+        };
+        await saveLocalDB(newDb);
+      }
     }
     
     // Clear processing cache to free up memory
