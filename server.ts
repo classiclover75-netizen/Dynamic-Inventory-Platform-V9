@@ -956,7 +956,20 @@ app.put('/api/settings', async (req, res) => {
 
 app.put('/api/state', async (req, res) => {
   try {
-    const newState = req.body;
+    let newState = req.body;
+
+    // Smart Fallback: Detect if the user uploaded a single-page backup instead of a full state backup
+    if (newState.name && Array.isArray(newState.rows) && !newState.pages) {
+      newState = {
+        pages: [newState.name],
+        pageConfigs: { [newState.name]: newState.config || {} },
+        pageRows: { [newState.name]: newState.rows },
+        // Keep default settings to prevent crashes
+        globalCopyBoxes: null,
+        globalRowNoWidth: 100,
+        maxSearchHistory: 10
+      };
+    }
     
     // Fix duplicate IDs across all pages first
     if (newState.pageRows) {
