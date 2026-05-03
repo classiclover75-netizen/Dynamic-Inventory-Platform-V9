@@ -337,10 +337,10 @@ export const ActivePageSettingsModal = React.memo(({
         </div>
 
         <div className="flex gap-2 mb-2">
-          <Button variant="outline" className="flex-1 justify-center" onClick={() => fileInputRef.current?.click()}>📥 Import Page JSON</Button>
+          <Button variant="outline" className="flex-1 justify-center" onClick={() => fileInputRef.current?.click()}>📂 Import Page (JSON/ZIP)</Button>
           <input 
             type="file" 
-            accept=".json" 
+            accept=".json,.zip" 
             ref={fileInputRef} 
             style={{ display: 'none' }} 
             onChange={(e) => {
@@ -351,6 +351,14 @@ export const ActivePageSettingsModal = React.memo(({
             }} 
           />
           <Button variant="dark" className="flex-1 justify-center" onClick={onExportPageJson}>💾 Export Page JSON</Button>
+        </div>
+
+        <div className="flex gap-2 mb-2">
+          <Button variant="outline" className="w-full justify-center border-blue-600 text-blue-600 hover:bg-blue-50" onClick={() => {
+            window.open("/api/export-zip/page/" + encodeURIComponent(activePage));
+          }}>
+            📂 Export Page ZIP (Images Included)
+          </Button>
         </div>
 
         <div className="flex gap-2 mb-2">

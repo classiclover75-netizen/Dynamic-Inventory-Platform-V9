@@ -585,85 +585,60 @@ function AppContent() {
     toast("Page JSON export started. Check your downloads.");
   };
 
-  const handleImportPageJson = async (file: File) => {
+  const handleImportPageData = async (file: File) => {
     const activePage = state.activePage;
     if (!activePage) return;
 
+    setIsImporting(true);
+    const isZip = file.name.toLowerCase().endsWith('.zip');
+    setImportProgress({ message: `Processing ${isZip ? 'ZIP' : 'JSON'} file...`, percent: null });
+
     try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
+      if (isZip) {
+        const formData = new FormData();
+        formData.append('backup', file);
 
-      if (!parsed.rows || !Array.isArray(parsed.rows)) {
-        toast("Invalid JSON format: missing rows array");
-        return;
-      }
+        const response = await fetch('/api/import-zip', {
+          method: 'POST',
+          body: formData,
+        });
 
-      setImportProgress({ message: "Merging data...", percent: 10 });
-
-      const currentRows = state.pageRows[activePage] || [];
-      const pageConfig = state.pageConfigs[activePage];
-      const imageCols =
-        pageConfig?.columns
-          .filter((c) => c.type === "image")
-          .map((c) => c.key) || [];
-
-      const existingRowsMap = new Map(
-        currentRows.map((r) => [String(r.id), r]),
-      );
-
-      const mergedRows = currentRows.map((existingRow) => {
-        const incomingRow = parsed.rows.find(
-          (r: any) => String(r.id) === String(existingRow.id),
-        );
-        if (incomingRow) {
-          const merged = { ...incomingRow };
-          for (const colKey of imageCols) {
-            if (existingRow[colKey]) {
-              merged[colKey] = existingRow[colKey];
-            }
-          }
-          return merged;
+        if (response.ok) {
+          setImportProgress({ message: "Data imported successfully!", percent: 100 });
+          toast("Data imported successfully");
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          toast(errData.error || "Failed to sync with server");
+          setIsImporting(false);
+          setImportProgress({ message: "Processing...", percent: null });
         }
-        return existingRow;
-      });
+      } else {
+        // Handle JSON
+        const text = await file.text();
+        const parsed = JSON.parse(text);
 
-      const incomingNewRows = parsed.rows.filter(
-        (r: any) => !existingRowsMap.has(String(r.id)),
-      );
-      mergedRows.push(...incomingNewRows);
-
-      setImportProgress({ message: "Saving changes...", percent: 50 });
-
-      const response = await fetch(
-        `/api/pageRows/${encodeURIComponent(activePage)}`,
-        {
+        const response = await fetch("/api/state", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ rows: mergedRows }),
-        },
-      );
+          body: JSON.stringify(parsed),
+        });
 
-      if (!response.ok) {
-        throw new Error("Failed to update page rows on server");
+        if (response.ok) {
+          setImportProgress({ message: "Data imported successfully!", percent: 100 });
+          toast("Data imported successfully");
+          setTimeout(() => window.location.reload(), 1000);
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          toast(errData.error || "Failed to sync with server");
+          setIsImporting(false);
+          setImportProgress({ message: "Processing...", percent: null });
+        }
       }
-
-      setState((prev) => ({
-        ...prev,
-        pageRows: {
-          ...prev.pageRows,
-          [activePage]: mergedRows,
-        },
-      }));
-
-      setImportProgress({ message: "Done!", percent: 100 });
-      setTimeout(
-        () => setImportProgress({ message: "Processing...", percent: null }),
-        2000,
-      );
-      toast("Page data imported successfully!");
-    } catch (error) {
-      console.error("Failed to import page json:", error);
-      toast("Failed to import JSON file");
+    } catch (err) {
+      console.error("Sync error:", err);
+      toast("An error occurred during import");
+      setIsImporting(false);
       setImportProgress({ message: "Processing...", percent: null });
     }
   };
@@ -4096,7 +4071,7 @@ function AppContent() {
           toggleModal("excelExport", true);
         }}
         onImportPageJson={(file) => {
-          handleImportPageJson(file);
+          handleImportPageData(file);
         }}
         onExportPageJson={() => {
           handleExportPageJson();

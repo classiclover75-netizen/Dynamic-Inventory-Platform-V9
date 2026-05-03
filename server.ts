@@ -649,6 +649,48 @@ app.get('/api/export-zip', async (req, res) => {
   }
 });
 
+app.get('/api/export-zip/page/:name', async (req, res) => {
+  try {
+    const { name } = req.params;
+    let pageData: any = null;
+
+    if (isUsingMongoDB) {
+      const page = await Page.findOne({ name });
+      if (!page) return res.status(404).json({ error: 'Page not found' });
+      const rows = await PageRow.find({ pageName: name });
+      pageData = {
+        name: page.name,
+        config: page.config,
+        rows: rows.map(r => r.data)
+      };
+    } else {
+      const db = await getLocalDB();
+      const page = db.pages.find((p: any) => p.name === name);
+      if (!page) return res.status(404).json({ error: 'Page not found' });
+      pageData = {
+        name: page.name,
+        config: page.config,
+        rows: page.rows || []
+      };
+    }
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename=page_backup_${name}_${new Date().getTime()}.zip`);
+    
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('error', (err) => { throw err; });
+    archive.pipe(res);
+
+    archive.append(JSON.stringify(pageData, null, 2), { name: 'data.json' });
+    archive.directory(UPLOADS_DIR, 'uploads');
+
+    await archive.finalize();
+  } catch (err) {
+    console.error('Export page zip error:', err);
+    res.status(500).json({ error: 'Failed to export page as zip' });
+  }
+});
+
 app.get('/api/state', async (req, res) => {
   try {
     if (isUsingMongoDB) {
@@ -1180,7 +1222,23 @@ app.post('/api/import-zip', upload.single('backup'), async (req, res) => {
       return res.status(400).json({ error: 'data.json not found in zip archive' });
     }
 
-    const newState = JSON.parse(dataEntry.getData().toString('utf8'));
+    const payload = JSON.parse(dataEntry.getData().toString('utf8'));
+    const isSinglePage = !!(payload.name && Array.isArray(payload.rows) && !payload.pages);
+    
+    let newState = payload;
+
+    // Smart Fallback: Detect if the user uploaded a single-page backup instead of a full state backup
+    if (isSinglePage) {
+      newState = {
+        pages: [payload.name],
+        pageConfigs: { [payload.name]: payload.config || {} },
+        pageRows: { [payload.name]: payload.rows },
+        // Keep default settings to prevent crashes
+        globalCopyBoxes: null,
+        globalRowNoWidth: 100,
+        maxSearchHistory: 10
+      };
+    }
 
     // Fix duplicate IDs across all pages first
     if (newState.pageRows) {
@@ -1245,77 +1303,114 @@ app.post('/api/import-zip', upload.single('backup'), async (req, res) => {
     const processedPageRows = newState.pageRows || {};
 
     if (isUsingMongoDB) {
-      // Fetch all existing rows to cleanup images
-      const allOldPageRows = await PageRow.find({});
-      const allOldRows = allOldPageRows.map(r => r.data);
-      
-      const allNewRows: any[] = [];
-      for (const pageName in processedPageRows) {
-        allNewRows.push(...processedPageRows[pageName]);
-      }
-      
-      await cleanupOrphanImages(allOldRows, allNewRows, true);
+      if (isSinglePage) {
+        const pageName = payload.name;
+        // Upsert page config
+        await Page.findOneAndUpdate(
+          { name: pageName },
+          { name: pageName, config: newState.pageConfigs[pageName] || {} },
+          { upsert: true }
+        );
 
-      // Clear existing data
-      await Page.deleteMany({});
-      await PageRow.deleteMany({});
-      await AppSettings.deleteMany({});
-      
-      // Insert new pages (without rows)
-      const pagesToInsert = newState.pages.map((name: string) => ({
-        name,
-        config: newState.pageConfigs[name] || {}
-      }));
-      
-      if (pagesToInsert.length > 0) {
-        await Page.insertMany(pagesToInsert);
-      }
+        // Delete only the rows belonging to that specific page
+        await PageRow.deleteMany({ pageName });
 
-      // Insert all rows
-      const allRowsToInsert: any[] = [];
-      newState.pages.forEach((pageName: string) => {
+        // Insert only the new rows for that page
         const rows = processedPageRows[pageName] || [];
-        rows.forEach((row: any) => {
-          allRowsToInsert.push({ pageName, data: row });
-        });
-      });
+        const rowsToInsert = rows.map((row: any) => ({ pageName, data: row }));
+        if (rowsToInsert.length > 0) {
+          await PageRow.insertMany(rowsToInsert);
+        }
+      } else {
+        // Fetch all existing rows to cleanup images
+        const allOldPageRows = await PageRow.find({});
+        const allOldRows = allOldPageRows.map(r => r.data);
+        
+        const allNewRows: any[] = [];
+        for (const pageName in processedPageRows) {
+          allNewRows.push(...processedPageRows[pageName]);
+        }
+        
+        await cleanupOrphanImages(allOldRows, allNewRows, true);
 
-      if (allRowsToInsert.length > 0) {
-        await PageRow.insertMany(allRowsToInsert);
-      }
-      
-      // Update settings
-      await AppSettings.findOneAndUpdate({}, {
-        globalCopyBoxes: newState.globalCopyBoxes,
-        globalRowNoWidth: newState.globalRowNoWidth,
-        maxSearchHistory: newState.maxSearchHistory
-      }, { upsert: true });
-    } else {
-      const db = await getLocalDB();
-      const allOldRows: any[] = [];
-      db.pages.forEach((p: any) => {
-        if (p.rows) allOldRows.push(...p.rows);
-      });
-
-      const allNewRows: any[] = [];
-      for (const pageName in processedPageRows) {
-        allNewRows.push(...processedPageRows[pageName]);
-      }
-      await cleanupOrphanImages(allOldRows, allNewRows, true);
-
-      const newDb = {
-        pages: newState.pages.map((name: string) => ({
+        // Clear existing data
+        await Page.deleteMany({});
+        await PageRow.deleteMany({});
+        await AppSettings.deleteMany({});
+        
+        // Insert new pages (without rows)
+        const pagesToInsert = newState.pages.map((name: string) => ({
           name,
-          config: newState.pageConfigs[name] || {},
-          rows: processedPageRows[name] || []
-        })),
-        settings: {
+          config: newState.pageConfigs[name] || {}
+        }));
+        
+        if (pagesToInsert.length > 0) {
+          await Page.insertMany(pagesToInsert);
+        }
+
+        // Insert all rows
+        const allRowsToInsert: any[] = [];
+        newState.pages.forEach((pageName: string) => {
+          const rows = processedPageRows[pageName] || [];
+          rows.forEach((row: any) => {
+            allRowsToInsert.push({ pageName, data: row });
+          });
+        });
+
+        if (allRowsToInsert.length > 0) {
+          await PageRow.insertMany(allRowsToInsert);
+        }
+        
+        // Update settings
+        await AppSettings.findOneAndUpdate({}, {
           globalCopyBoxes: newState.globalCopyBoxes,
           globalRowNoWidth: newState.globalRowNoWidth,
           maxSearchHistory: newState.maxSearchHistory
+        }, { upsert: true });
+      }
+    } else {
+      const db = await getLocalDB();
+      if (isSinglePage) {
+        const pageName = payload.name;
+        const pageIdx = db.pages.findIndex((p: any) => p.name === pageName);
+        const newPageData = {
+          name: pageName,
+          config: newState.pageConfigs[pageName] || {},
+          rows: processedPageRows[pageName] || []
+        };
+
+        if (pageIdx >= 0) {
+          db.pages[pageIdx] = newPageData;
+        } else {
+          db.pages.push(newPageData);
         }
-      };
-      await saveLocalDB(newDb);
+        await saveLocalDB(db);
+      } else {
+        const allOldRows: any[] = [];
+        db.pages.forEach((p: any) => {
+          if (p.rows) allOldRows.push(...p.rows);
+        });
+
+        const allNewRows: any[] = [];
+        for (const pageName in processedPageRows) {
+          allNewRows.push(...processedPageRows[pageName]);
+        }
+        await cleanupOrphanImages(allOldRows, allNewRows, true);
+
+        const newDb = {
+          pages: newState.pages.map((name: string) => ({
+            name,
+            config: newState.pageConfigs[name] || {},
+            rows: processedPageRows[name] || []
+          })),
+          settings: {
+            globalCopyBoxes: newState.globalCopyBoxes,
+            globalRowNoWidth: newState.globalRowNoWidth,
+            maxSearchHistory: newState.maxSearchHistory
+          }
+        };
+        await saveLocalDB(newDb);
+      }
     }
 
     // Clean up temp file
