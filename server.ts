@@ -371,6 +371,25 @@ function embedImagesInRows(rows: any[]) {
   });
 }
 
+const getFormattedDate = () => {
+  const now = new Date();
+  const day = now.getDate();
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const month = months[now.getMonth()];
+  const year = now.getFullYear();
+
+  let hours = now.getHours();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12; // the hour '0' should be '12'
+  const hoursStr = hours.toString().padStart(2, '0');
+
+  const minutes = now.getMinutes().toString().padStart(2, '0');
+  const seconds = now.getSeconds().toString().padStart(2, '0');
+
+  return `${day}-${month}-${year}-${hoursStr}-${minutes}-${seconds}-${ampm}`;
+};
+
 app.post('/api/admin/migrate-images', async (req, res) => {
   try {
     let migratedCount = 0;
@@ -619,15 +638,8 @@ app.get('/api/export-zip', async (req, res) => {
       // DO NOT EMBED IMAGES.
     }
 
-    const date = new Date();
-    const day = String(date.getDate()).padStart(2, '0');
-    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-    const month = monthNames[date.getMonth()];
-    const year = date.getFullYear();
-    const formattedDate = `${day}-${month}-${year}`;
-
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename=inventory_backup_${formattedDate}.zip`);
+    res.setHeader('Content-Disposition', `attachment; filename=full_backup_${getFormattedDate()}.zip`);
     
     const archive = archiver('zip', {
       zlib: { level: 9 } // Sets the compression level.
@@ -675,7 +687,7 @@ app.get('/api/export-zip/page/:name', async (req, res) => {
     }
 
     res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename=page_backup_${name}_${new Date().getTime()}.zip`);
+    res.setHeader('Content-Disposition', `attachment; filename=page_backup_${name}_${getFormattedDate()}.zip`);
     
     const archive = archiver('zip', { zlib: { level: 9 } });
     archive.on('error', (err) => { throw err; });
