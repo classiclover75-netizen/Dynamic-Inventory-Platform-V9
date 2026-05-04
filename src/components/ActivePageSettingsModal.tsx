@@ -367,8 +367,13 @@ export const ActivePageSettingsModal = React.memo(({
           <Button variant="blue" className="flex-1 justify-center" onClick={onExportExcel}>📤 Export Excel</Button>
         </div>
 
-        <div className="flex gap-2 mb-2">
+        <div className="flex justify-between items-center mt-2 mb-4 gap-2">
           <Button variant="outline" className="flex-1 justify-center" onClick={() => fileInputRef.current?.click()}>📂 Import Page (JSON/ZIP)</Button>
+          <Button variant="outline" className="flex-1 justify-center border-blue-600 text-blue-600 hover:bg-blue-50" onClick={() => {
+            window.open("/api/export-zip/page/" + encodeURIComponent(activePage));
+          }}>
+            📂 Export Page (ZIP Archive)
+          </Button>
           <input 
             type="file" 
             accept=".json,.zip" 
@@ -381,14 +386,6 @@ export const ActivePageSettingsModal = React.memo(({
               }
             }} 
           />
-        </div>
-
-        <div className="flex gap-2 mb-2">
-          <Button variant="outline" className="w-full justify-center border-blue-600 text-blue-600 hover:bg-blue-50" onClick={() => {
-            window.open("/api/export-zip/page/" + encodeURIComponent(activePage));
-          }}>
-            📂 Export Page (ZIP Archive)
-          </Button>
         </div>
 
         <div className="flex gap-2 mb-2">
