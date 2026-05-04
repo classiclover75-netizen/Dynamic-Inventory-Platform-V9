@@ -378,16 +378,8 @@ const getFormattedDate = () => {
   const month = months[now.getMonth()];
   const year = now.getFullYear();
 
-  let hours = now.getHours();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12; // the hour '0' should be '12'
-  const hoursStr = hours.toString().padStart(2, '0');
-
-  const minutes = now.getMinutes().toString().padStart(2, '0');
-  const seconds = now.getSeconds().toString().padStart(2, '0');
-
-  return `${day}-${month}-${year}-${hoursStr}-${minutes}-${seconds}-${ampm}`;
+  // Output format: "4-May-2026"
+  return `${day}-${month}-${year}`;
 };
 
 app.post('/api/admin/migrate-images', async (req, res) => {
