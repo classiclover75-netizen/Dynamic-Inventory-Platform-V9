@@ -101,28 +101,28 @@ async function processRowImages(row: any, forceSave = false, providedCache?: Map
     }
 
     if (typeof imgVal === 'string') {
+      // Extra cautious check: if it looks like a local filename, return as is without re-processing
+      if (imgVal && !imgVal.startsWith('http') && !imgVal.startsWith('data:') && !imgVal.startsWith('blob:') && /^[a-zA-Z0-9_\-\.]+\.(png|jpg|jpeg|webp|gif|avif|tiff)$/i.test(imgVal)) {
+        continue; 
+      }
+
       let isImage = false;
       let shouldProcess = false;
 
       if (/^[a-zA-Z0-9_\-\.]+\.(png|jpg|jpeg|webp|gif|avif|tiff)$/i.test(imgVal)) {
         isImage = true;
-        if (imgVal.startsWith(`${safeId}_`) && fs.existsSync(path.join(UPLOADS_DIR, imgVal))) {
+        // If it's already a valid filename and exists in uploads, keep it without re-processing
+        if (fs.existsSync(path.join(UPLOADS_DIR, imgVal))) {
           continue; 
-        } else if (fs.existsSync(path.join(UPLOADS_DIR, imgVal))) {
-          shouldProcess = true;
         }
       } else if (/^https?:\/\//i.test(imgVal)) {
         isImage = true;
         if (imgVal.includes('/uploads/')) {
           const matchedFilename = imgVal.split('/uploads/').pop()?.split('?')[0];
+          // If it's a URL to local uploads and the file exists, leave it as is
           if (matchedFilename && fs.existsSync(path.join(UPLOADS_DIR, matchedFilename))) {
-             if (matchedFilename.startsWith(`${safeId}_`)) {
-               newRow[key] = isObject ? { ...value, data: matchedFilename } : matchedFilename;
-               continue;
-             } else {
-               imgVal = matchedFilename; // Switch to treating it as local file
-               shouldProcess = true;
-             }
+            newRow[key] = isObject ? { ...value, data: matchedFilename } : matchedFilename;
+            continue;
           } else {
              shouldProcess = true;
           }
@@ -850,9 +850,9 @@ app.put('/api/pageRows/:name', async (req, res) => {
     });
 
     if (isUsingMongoDB) {
-      const oldPageRows = await PageRow.find({ pageName: name });
-      const oldRows = oldPageRows.map(r => r.data);
-      const newRows = await processRowsConcurrently(rowsToProcess, 50, forceSave);
+      const pageConfig = await Page.findOne({ name });
+      const isTracker = pageConfig?.config?.linkedSourcePage;
+      const newRows = isTracker ? rowsToProcess : await processRowsConcurrently(rowsToProcess, 50, forceSave);
       
       await PageRow.deleteMany({ pageName: name });
       if (newRows.length > 0) {
@@ -862,8 +862,8 @@ app.put('/api/pageRows/:name', async (req, res) => {
       const db = await getLocalDB();
       const page = db.pages.find((p: any) => p.name === name);
       if (page) {
-        const oldRows = page.rows || [];
-        const newRows = await processRowsConcurrently(rowsToProcess, 50, forceSave);
+        const isTracker = page.config?.linkedSourcePage;
+        const newRows = isTracker ? rowsToProcess : await processRowsConcurrently(rowsToProcess, 50, forceSave);
         page.rows = newRows;
       }
       await saveLocalDB(db);
@@ -1084,7 +1084,13 @@ app.put('/api/state', async (req, res) => {
     const imageProcessingCache = new Map<string, Promise<string>>(); // Deduplication cache across all pages
     if (newState.pageRows) {
       for (const pageName in newState.pageRows) {
-        processedPageRows[pageName] = await processRowsConcurrently(newState.pageRows[pageName], 50, true, imageProcessingCache);
+        const isTracker = newState.pageConfigs?.[pageName]?.linkedSourcePage;
+        if (isTracker) {
+          // Shallow copy for Linked Page/Live Tracker to avoid re-processing images
+          processedPageRows[pageName] = [...newState.pageRows[pageName]];
+        } else {
+          processedPageRows[pageName] = await processRowsConcurrently(newState.pageRows[pageName], 50, true, imageProcessingCache);
+        }
       }
     }
 

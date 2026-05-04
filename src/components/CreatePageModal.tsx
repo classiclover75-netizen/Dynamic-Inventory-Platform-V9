@@ -67,6 +67,7 @@ export const CreatePageModal = React.memo(({
       type: c.type,
       locked: false,
       movable: true,
+      width: c.type === 'sale_tracker' || (c.type as string) === 'range' ? 150 : 100,
       copyPerItem: c.type === 'text_with_copy_button',
       multiInput: c.type === 'text_with_copy_button'
     }));

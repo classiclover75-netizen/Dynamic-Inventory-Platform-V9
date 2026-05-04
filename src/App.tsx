@@ -1024,12 +1024,18 @@ function AppContent() {
     // EXACT COPY of ALL columns, appending only Total and Remaining
     const newColumns = [
       ...filteredColumns,
-      { key: "total_qty", name: "Total Qty", type: "number" as const },
+      {
+        key: "total_qty",
+        name: "Total Qty",
+        type: "number" as const,
+        width: 150,
+      },
       {
         key: "remaining_qty",
         name: "Remaining Qty",
         type: "number" as const,
         locked: true,
+        width: 150,
       },
     ];
 
@@ -1141,6 +1147,7 @@ function AppContent() {
       name: customSaleName,
       type: "sale_tracker" as const,
       archived: false,
+      width: 150,
     };
 
     // Find where to insert the new column (before existing sale columns)
@@ -1217,6 +1224,13 @@ function AppContent() {
   };
 
   const handleCreatePage = async (name: string, columns: Column[]) => {
+    const columnsWithDefaults = columns.map(c => {
+      if (c.type === 'sale_tracker' || (c as any).type === 'range') {
+        return { ...c, width: c.width || 150 };
+      }
+      return c;
+    });
+
     const newConfig = {
       rowReorderEnabled: false,
       hoverPreviewEnabled: false,
@@ -1228,7 +1242,7 @@ function AppContent() {
           locked: true,
           movable: false,
         },
-        ...columns,
+        ...columnsWithDefaults,
       ],
     };
 
@@ -1457,9 +1471,17 @@ function AppContent() {
   };
 
   const handleCreateColumns = async (newColumns: Column[]) => {
+    // Set default width of 150 for sale and range columns
+    const columnsWithDefaults = newColumns.map(c => {
+      if (c.type === 'sale_tracker' || (c as any).type === 'range') {
+        return { ...c, width: c.width || 150 };
+      }
+      return c;
+    });
+
     const updatedConfig = {
       ...state.pageConfigs[state.activePage],
-      columns: [...state.pageConfigs[state.activePage].columns, ...newColumns],
+      columns: [...state.pageConfigs[state.activePage].columns, ...columnsWithDefaults],
     };
 
     try {
