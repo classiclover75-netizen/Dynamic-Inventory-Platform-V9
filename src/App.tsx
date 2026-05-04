@@ -4035,6 +4035,8 @@ function AppContent() {
         onClose={closeAllModals}
         activePage={state.activePage}
         pageConfig={state.activePage ? activeConfig : null}
+        pageRows={state.pageRows}
+        pageConfigs={state.pageConfigs}
         onSave={handleSaveActivePageSettings}
         onDeleteColumn={handleDeleteColumnOptions}
         onSyncTracker={handleSyncTracker}

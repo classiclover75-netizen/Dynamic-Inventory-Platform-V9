@@ -29,7 +29,9 @@ export const ActivePageSettingsModal = React.memo(({
   onSyncTracker,
   onConfigureCopyBoxes,
   existingPages,
-  setConfirmationModal
+  setConfirmationModal,
+  pageRows,
+  pageConfigs
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -54,6 +56,8 @@ export const ActivePageSettingsModal = React.memo(({
   onConfigureCopyBoxes: () => void;
   existingPages: string[];
   setConfirmationModal: (modal: { isOpen: boolean, title?: string, message?: string, onConfirm: () => void } | null) => void;
+  pageRows: Record<string, any[]>;
+  pageConfigs: Record<string, PageConfig>;
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [rowReorder, setRowReorder] = useState(pageConfig?.rowReorderEnabled || false);
@@ -65,6 +69,35 @@ export const ActivePageSettingsModal = React.memo(({
   const [secondarySearchPage, setSecondarySearchPage] = useState<string>(pageConfig?.secondarySearchPage || '');
   const [sortSettingsColumn, setSortSettingsColumn] = useState<Column | null>(null);
   const [pendingDeleteSaleCol, setPendingDeleteSaleCol] = useState<Column | null>(null);
+  const [pageStats, setPageStats] = useState<{ totalRows: number, totalColumns: number, totalImages: number, duplicateImages: number } | null>(null);
+
+  const calculateStats = () => {
+    const rows = pageRows[activePage] || [];
+    const config = pageConfigs[activePage] || { columns: [] };
+
+    const totalRows = rows.length;
+    const totalColumns = config.columns.length;
+
+    // Find which columns are of type 'image'
+    const imageColumns = config.columns.filter(c => c.type === 'image').map(c => c.key);
+
+    let totalImages = 0;
+    const uniqueImages = new Set();
+
+    rows.forEach(row => {
+      imageColumns.forEach(colKey => {
+        const imgVal = row[colKey];
+        // Count if the image cell is not empty
+        if (imgVal && typeof imgVal === 'string' && imgVal.trim() !== '') {
+          totalImages++;
+          uniqueImages.add(imgVal);
+        }
+      });
+    });
+
+    const duplicateImages = totalImages - uniqueImages.size;
+    setPageStats({ totalRows, totalColumns, totalImages, duplicateImages });
+  };
 
   React.useEffect(() => {
     if (isOpen) {
@@ -379,6 +412,25 @@ export const ActivePageSettingsModal = React.memo(({
             <Trash2 size={14} /> Clear Active Page All Data 
           </Button>
         </div>
+
+        <div className="flex gap-2 mb-2">
+          <Button variant="outline" className="flex-1 justify-center text-purple-600 border-purple-600 hover:bg-purple-50" onClick={calculateStats}>
+            📊 Page Statistics
+          </Button>
+        </div>
+
+        {pageStats && (
+          <div className="stats-container" style={{ marginTop: '15px', padding: '15px', backgroundColor: '#f3f4f6', borderRadius: '8px', border: '1px solid #e5e7eb', marginBottom: '15px' }}>
+            <h4 style={{ margin: '0 0 10px 0', color: '#374151' }}>📊 Statistics for {activePage}</h4>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, color: '#4b5563', lineHeight: '1.8', fontSize: '13px' }}>
+              <li><strong>Total Rows:</strong> {pageStats.totalRows}</li>
+              <li><strong>Total Columns:</strong> {pageStats.totalColumns}</li>
+              <li><strong>Total Images:</strong> {pageStats.totalImages}</li>
+              <li><strong>Duplicate Images:</strong> {pageStats.duplicateImages}</li>
+            </ul>
+            <button onClick={() => setPageStats(null)} style={{ marginTop: '10px', padding: '5px 10px', background: '#d1d5db', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '12px' }}>Close Stats</button>
+          </div>
+        )}
 
         <div className="mt-2 text-[11px] text-[#78909c] leading-snug">
           New columns will be added to the active page. <b>Row No.</b> always remains first and locked. You can drag and drop columns here to reorder them.
