@@ -101,21 +101,17 @@ async function processRowImages(row: any, forceSave = false, providedCache?: Map
     }
 
     if (typeof imgVal === 'string') {
-      // Extra cautious check: if it looks like a local filename, return as is without re-processing
-      if (imgVal && !imgVal.startsWith('http') && !imgVal.startsWith('data:') && !imgVal.startsWith('blob:') && /^[a-zA-Z0-9_\-\.]+\.(png|jpg|jpeg|webp|gif|avif|tiff)$/i.test(imgVal)) {
-        continue; 
+      // The value is already a local filename reference or regular text.
+      // DO NOT re-process, DO NOT rename, DO NOT check if it matches row.id.
+      // Allow multiple rows to share this exact filename.
+      if (!imgVal.startsWith('http') && !imgVal.startsWith('data:') && !imgVal.startsWith('blob:')) {
+        continue;
       }
 
       let isImage = false;
       let shouldProcess = false;
 
-      if (/^[a-zA-Z0-9_\-\.]+\.(png|jpg|jpeg|webp|gif|avif|tiff)$/i.test(imgVal)) {
-        isImage = true;
-        // If it's already a valid filename and exists in uploads, keep it without re-processing
-        if (fs.existsSync(path.join(UPLOADS_DIR, imgVal))) {
-          continue; 
-        }
-      } else if (/^https?:\/\//i.test(imgVal)) {
+      if (/^https?:\/\//i.test(imgVal)) {
         isImage = true;
         if (imgVal.includes('/uploads/')) {
           const matchedFilename = imgVal.split('/uploads/').pop()?.split('?')[0];
