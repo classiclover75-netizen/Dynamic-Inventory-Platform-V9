@@ -22,7 +22,6 @@ export const ActivePageSettingsModal = React.memo(({
   onImportExcel,
   onExportExcel,
   onImportPageJson,
-  onExportPageJson,
   onFindDuplicates,
   onClearPageData,
   onCreateTracker,
@@ -48,7 +47,6 @@ export const ActivePageSettingsModal = React.memo(({
   onImportExcel: () => void;
   onExportExcel: () => void;
   onImportPageJson: (file: File) => void;
-  onExportPageJson: () => void;
   onFindDuplicates: () => void;
   onClearPageData: () => void;
   onCreateTracker?: (sourcePage: string) => void;
@@ -383,14 +381,13 @@ export const ActivePageSettingsModal = React.memo(({
               }
             }} 
           />
-          <Button variant="dark" className="flex-1 justify-center" onClick={onExportPageJson}>💾 Export Page JSON</Button>
         </div>
 
         <div className="flex gap-2 mb-2">
           <Button variant="outline" className="w-full justify-center border-blue-600 text-blue-600 hover:bg-blue-50" onClick={() => {
             window.open("/api/export-zip/page/" + encodeURIComponent(activePage));
           }}>
-            📂 Export Page ZIP (Images Included)
+            📂 Export Page (ZIP Archive)
           </Button>
         </div>
 

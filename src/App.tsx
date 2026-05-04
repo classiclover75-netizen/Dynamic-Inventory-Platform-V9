@@ -579,12 +579,6 @@ function AppContent() {
     toast("Export started. Check your downloads.");
   };
 
-  const handleExportPageJson = () => {
-    if (!state.activePage) return;
-    window.open(`/api/export/page/${encodeURIComponent(state.activePage)}`);
-    toast("Page JSON export started. Check your downloads.");
-  };
-
   const handleImportPageData = async (file: File) => {
     const activePage = state.activePage;
     if (!activePage) return;
@@ -4074,9 +4068,6 @@ function AppContent() {
         }}
         onImportPageJson={(file) => {
           handleImportPageData(file);
-        }}
-        onExportPageJson={() => {
-          handleExportPageJson();
         }}
         onFindDuplicates={() => {
           setReturnToSettings(true);
