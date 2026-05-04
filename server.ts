@@ -1214,8 +1214,10 @@ app.post('/api/import-zip', upload.single('backup'), async (req, res) => {
     const zip = new AdmZip(req.file.path);
     const zipEntries = zip.getEntries();
     
-    // Extract uploads directly
-    zip.extractEntryTo('uploads/', UPLOADS_DIR, false, true);
+    // Extract uploads if existing
+    if (zip.getEntry('uploads/')) {
+      zip.extractEntryTo('uploads/', UPLOADS_DIR, false, true);
+    }
 
     const dataEntry = zipEntries.find((entry: any) => entry.entryName === 'data.json');
     if (!dataEntry) {
@@ -1224,6 +1226,7 @@ app.post('/api/import-zip', upload.single('backup'), async (req, res) => {
 
     const payload = JSON.parse(dataEntry.getData().toString('utf8'));
     const isSinglePage = !!(payload.name && Array.isArray(payload.rows) && !payload.pages);
+    console.log(`Import ZIP detected: ${isSinglePage ? 'Single Page' : 'Full Backup'} (${payload.name || 'All Pages'})`);
     
     let newState = payload;
 
