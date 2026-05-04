@@ -1,5 +1,6 @@
 {
   "name": "Dynamic Inventory Platform-V9",
   "description": "Dynamic Inventory Platform-V9",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "majorCapabilities": []
 }
